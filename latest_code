@@ -43,7 +43,7 @@ class TuxedoMetricsHandler(BaseHTTPRequestHandler):
             self.end_headers()
             for key, value in metrics.items():
                 label = labels.get(key, '')
-                self.wfile.write('{}{{{}}} {}\n'.format(key, label, value)
+                self.wfile.write('{}{{{}}} {}\n'.format(key, label, value))
 
 # Function to extract and update metrics
 def extract_metrics_from_output(output, app_name):
@@ -124,7 +124,6 @@ def extract_metrics_from_output(output, app_name):
             metrics["tuxedo_process_status"] = tuxedo_process_status
             metrics["tuxedo_total_processes"] = tuxedo_total_processes
             metrics["tuxedo_missing_processes"] = tuxedo_missing_processes
-
         elif "proxies" in line:
             # Scenario 2: Metrics Extraction
             if "Normal" in line:
