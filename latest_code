@@ -34,27 +34,12 @@ except Exception as e:
     tuxedo_exporter_error = 1
     metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
 
-# HTTP Server Setup
-class TuxedoMetricsHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/metrics':
-            collect_tuxedo_metrics()
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            for key, value in metrics.items():
-                label = labels.get(key, '')
-                self.wfile.write('{}{{{}}} {}\n'.format(key, label, value))
-
 # Function to extract and update metrics
 def extract_metrics_from_output(output, app_name):
     global metrics
     global labels
 
     for line in output.splitlines():
-        if "ulimit: core file size: cannot modify limit: Operation not permitted" in line:
-            continue  # Skip this line
-
         if "processes" in line:
             # Scenario 1: Metrics Extraction
             if "Normal" in line:
@@ -187,12 +172,29 @@ def execute_commands():
                 tuxedo_exporter_error = 1
                 metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
 
+# Function to collect Tuxedo metrics
+def collect_tuxedo_metrics():
+    global metrics
+    metrics = {}
+    execute_commands()
+
+# HTTP Server Setup
+class TuxedoMetricsHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/metrics':
+            collect_tuxedo_metrics()
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            for key, value in metrics.items():
+                label = labels.get(key, '')
+                self.wfile.write('{}{{{}}} {}\n'.format(key, label, value)
+
 # Continuously expose metrics
 try:
-    server = HTTPServer(('', http_port), TuxedoMetricsHandler)
+    server = HTTPServer(('127.0.0.1', http_port), TuxedoMetricsHandler)
     print("HTTP server started on port {}".format(http_port))
     while True:
-        execute_commands()
         time.sleep(frequency)
 except KeyboardInterrupt:
-    pass  # Allow the
+    pass  # Allow the script to be terminated gracefully without closing the server
