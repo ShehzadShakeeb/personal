@@ -52,70 +52,21 @@ def extract_metrics_from_output(output, app_name):
     global labels
 
     for line in output.splitlines():
+        if "ulimit: core file size: cannot modify limit: Operation not permitted" in line:
+            continue  # Skip processing this line and proceed to the next one
+
         if "processes" in line:
             # Scenario 1: Metrics Extraction
             if "Normal" in line:
                 tuxedo_process_status = 2  # Normal
-                tuxedo_total_processes = 0
+                tuxedo_total_processes = int(line.split()[-3])
                 tuxedo_missing_processes = 0
-                tuxedo_process_status_message = ""
-
-                parts = line.split()
-                for i, part in enumerate(parts):
-                    if part == "comp=":
-                        tux_comp = parts[i + 1]
-                        break
-
-                # Extract the message
-                message = " ".join(parts[3:])
-
-                # Extract the total and missing processes
-                total_processes = missing_processes = None
-                for part in parts:
-                    if part.isdigit():
-                        if total_processes is None:
-                            total_processes = int(part)
-                        else:
-                            missing_processes = int(part)
-
-                if total_processes is not None:
-                    tuxedo_total_processes = total_processes
-                if missing_processes is not None:
-                    tuxedo_missing_processes = missing_processes
-
-                tuxedo_process_status_message = message
-
+                tuxedo_process_status_message = " ".join(line.split()[3:-5])
             elif "Critical" in line:
                 tuxedo_process_status = 1  # Critical
-                tuxedo_total_processes = 0
-                tuxedo_missing_processes = 0
-                tuxedo_process_status_message = ""
-
-                parts = line.split()
-                for i, part in enumerate(parts):
-                    if part == "comp=":
-                        tux_comp = parts[i + 1]
-                        break
-
-                # Extract the message
-                message = " ".join(parts[3:])
-
-                # Extract the total and missing processes
-                total_processes = missing_processes = None
-                for part in parts:
-                    if part.isdigit():
-                        if total_processes is not None:
-                            total_processes = int(part)
-                        else:
-                            missing_processes = int(part)
-
-                if total_processes is not None:
-                    tuxedo_total_processes = total_processes
-                if missing_processes is not None:
-                    tuxedo_missing_processes = missing_processes
-
-                tuxedo_process_status_message = message
-
+                tuxedo_total_processes = int(line.split()[-5])
+                tuxedo_missing_processes = int(line.split()[-7])
+                tuxedo_process_status_message = " ".join(line.split()[3:-8])
             else:
                 continue
 
@@ -125,6 +76,7 @@ def extract_metrics_from_output(output, app_name):
             metrics["tuxedo_process_status"] = tuxedo_process_status
             metrics["tuxedo_total_processes"] = tuxedo_total_processes
             metrics["tuxedo_missing_processes"] = tuxedo_missing_processes
+
         elif "proxies" in line:
             # Scenario 2: Metrics Extraction
             if "Normal" in line:
@@ -133,33 +85,8 @@ def extract_metrics_from_output(output, app_name):
                 tuxedo_proxy_status_message = " ".join(line.split()[3:])
             elif "Critical" in line:
                 tuxedo_proxy_status = 1  # Critical
-                tuxedo_missing_proxies = 0
+                tuxedo_missing_proxies = int(line.split()[2])
                 tuxedo_proxy_status_message = " ".join(line.split()[3:])
-
-                parts = line.split()
-                for i, part in enumerate(parts):
-                    if part == "comp=":
-                        tux_comp = parts[i + 1]
-                        break
-
-                # Extract the message
-                message = " ".join(parts[3:])
-
-                # Extract the total and missing proxies
-                total_proxies = missing_proxies = None
-                for part in parts:
-                    if part.isdigit():
-                        if total_proxies is not None:
-                            total_proxies = int(part)
-                        else:
-                            missing_proxies = int(part)
-
-                if total_proxies is not None:
-                    tuxedo_total_proxies = total_proxies
-                if missing_proxies is not None:
-                    tuxedo_missing_proxies = missing_proxies
-
-                tuxedo_proxy_status_message = message
             else:
                 continue
 
@@ -179,10 +106,12 @@ def execute_commands():
             if "ulimit: core file size: cannot modify limit: Operation not permitted" not in output:
                 extract_metrics_from_output(output, app_name)
         except Exception as e:
-            if "ulimit: core file size: cannot modify limit: Operation not permitted" not in str(e):
-                print("Error executing command for {}: {}".format(app_name, str(e)))
-                tuxedo_exporter_error = 1
-                metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
+            error_message = str(e)
+            if "ulimit: core file size: cannot modify limit: Operation not permitted" in error_message:
+                continue  # Skip processing this line and proceed to the next one
+            print("Error executing command for {}: {}".format(app_name, error_message))
+            tuxedo_exporter_error = 1
+            metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
 
 # Continuously expose metrics
 try:
