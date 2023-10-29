@@ -176,7 +176,8 @@ def execute_commands():
         command = app["command"]
         try:
             output = subprocess.check_output(command, shell=True, universal_newlines=True)
-            extract_metrics_from_output(output, app_name)
+            if "ulimit: core file size: cannot modify limit: Operation not permitted" not in output:
+                extract_metrics_from_output(output, app_name)
         except Exception as e:
             if "ulimit: core file size: cannot modify limit: Operation not permitted" not in str(e):
                 print("Error executing command for {}: {}".format(app_name, str(e)))
