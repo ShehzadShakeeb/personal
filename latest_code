@@ -1,43 +1,16 @@
-import yaml
-import time
-import subprocess
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+import subprocess
+import yaml
 
-# User-Defined Variables
-yaml_file_path = "/opt/apps/gxadm/xtest/tuxedo_monitor_config.yaml"
-http_port = 8000
-frequency = 60
+# Default values
+default_http_port = 8000
+config_file_path = '/opt/apps/gxadm/xtest/tuxedo_monitor_config.yaml'
 
-# Metrics Data Structure
-metrics = {}
-labels = {}
-
-# Initialize default values
-tuxedo_exporter_error = 0
-metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
-
-# Read YAML File
-try:
-    with open(yaml_file_path, 'r') as yaml_file:
-        config = yaml.safe_load(yaml_file)
-        if "http_port" in config:
-            http_port = config["http_port"]
-        if "frequency" in config:
-            frequency = config["frequency"]
-        applications = config["applications"]
-except IOError as e:
-    print("Error: YAML file not found.")
-    tuxedo_exporter_error = 1
-    metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
-except Exception as e:
-    print("Error reading YAML file: {}".format(str(e)))
-    tuxedo_exporter_error = 1
-    metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
-
-# HTTP Server Setup
+# Define the request handler for the HTTP server
 class TuxedoMetricsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/metrics':
+            collect_tuxedo_metrics()
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
@@ -45,11 +18,67 @@ class TuxedoMetricsHandler(BaseHTTPRequestHandler):
                 label = labels.get(key, '')
                 self.wfile.write('{}{{{}}} {}\n'.format(key, label, value))
 
-# Function to extract and update metrics
-def extract_metrics_from_output(output, app_name):
-    global metrics
-    global labels
+# Initialize metrics and labels
+metrics = {}
+labels = {}
 
+# Parse the YAML configuration
+def parse_yaml_config():
+    global default_http_port
+    if os.path.isfile(config_file_path):
+        with open(config_file_path, 'r') as file:
+            config_data = file.read()
+        config = yaml.load(config_data, Loader=yaml.Loader)
+        if 'http_port' in config:
+            default_http_port = config['http_port']
+        return config  # Return the loaded configuration
+
+# Function to collect Tuxedo metrics from script 2
+def collect_tuxedo_metrics():
+    global metrics, labels
+
+    # User-Defined Variables from script 2
+    yaml_file_path = "/opt/apps/gxadm/xtest/tuxedo_monitor_config.yaml"
+    frequency = 60
+
+    # Metrics Data Structure from script 2
+    tuxedo_exporter_error = 0
+    metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
+
+    # Read YAML File from script 2
+    try:
+        with open(yaml_file_path, 'r') as yaml_file:
+            config = yaml.safe_load(yaml_file)
+            applications = config["applications"]
+    except IOError as e:
+        print("Error: YAML file not found.")
+        tuxedo_exporter_error = 1
+        metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
+    except Exception as e:
+        print("Error reading YAML file: {}".format(str(e))
+        tuxedo_exporter_error = 1
+        metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
+
+    for app in applications:
+        app_name = app["name"]
+        command = app["command"]
+        try:
+            output = subprocess.check_output(command, shell=True, universal_newlines=True)
+            if "ulimit: core file size: cannot modify limit: Operation not permitted" in output:
+                continue  # Modified this line
+            parse_command_output(output)
+        except Exception as e:
+            if "ulimit: core file size: cannot modify limit: Operation not permitted" in str(e):
+                continue
+            print("Error executing command for {}: {}".format(app_name, str(e)))
+            tuxedo_exporter_error = 1
+            metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
+
+# Function to extract and update metrics from script 2
+def parse_command_output(output):
+    global metrics, labels
+
+    # Metric extraction logic from script 2
     for line in output.splitlines():
         if "processes" in line:
             # Scenario 1: Metrics Extraction
@@ -124,6 +153,7 @@ def extract_metrics_from_output(output, app_name):
             metrics["tuxedo_process_status"] = tuxedo_process_status
             metrics["tuxedo_total_processes"] = tuxedo_total_processes
             metrics["tuxedo_missing_processes"] = tuxedo_missing_processes
+
         elif "proxies" in line:
             # Scenario 2: Metrics Extraction
             if "Normal" in line:
@@ -142,7 +172,7 @@ def extract_metrics_from_output(output, app_name):
                         break
 
                 # Extract the message
-                message = " ".join(parts[3:])
+                message = " ".join parts[3:]
 
                 # Extract the total and missing proxies
                 total_proxies = missing_proxies = None
@@ -159,6 +189,7 @@ def extract_metrics_from_output(output, app_name):
                     tuxedo_missing_proxies = missing_proxies
 
                 tuxedo_proxy_status_message = message
+
             else:
                 continue
 
@@ -168,27 +199,16 @@ def extract_metrics_from_output(output, app_name):
             metrics["tuxedo_proxy_status"] = tuxedo_proxy_status
             metrics["tuxedo_missing_proxies"] = tuxedo_missing_proxies
 
-# Execution of Commands
-def execute_commands():
-    for app in applications:
-        app_name = app["name"]
-        command = app["command"]
-        try:
-            output = subprocess.check_output(command, shell=True, universal_newlines=True)
-            if "ulimit: core file size: cannot modify limit: Operation not permitted" not in output:
-                extract_metrics_from_output(output, app_name)
-        except Exception as e:
-            if "ulimit: core file size: cannot modify limit: Operation not permitted" not in str(e):
-                print("Error executing command for {}: {}".format(app_name, str(e)))
-                tuxedo_exporter_error = 1
-                metrics["tuxedo_exporter_error"] = tuxedo_exporter_error
+# Main function
+def main():
+    parse_yaml_config()
 
-# Continuously expose metrics
-try:
-    server = HTTPServer(('127.0.0.1', http_port), TuxedoMetricsHandler)
-    print("HTTP server started on port {}".format(http_port))
+    # Start an HTTP server to expose metrics
+    server = HTTPServer(('127.0.0.1', default_http_port), TuxedoMetricsHandler)
+    print("Started HTTP server on port {0}".format(default_http_port))
+
     while True:
-        execute_commands()
-        time.sleep(frequency)
-except KeyboardInterrupt:
-    pass  # Allow the script to be terminated gracefully without closing the server
+        server.handle_request()
+
+if __name__ == '__main__':
+    main()
