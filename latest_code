@@ -1,0 +1,109 @@
+import subprocess
+import time
+import yaml
+import re
+from BaseHTTPServer import BaseHTTPRequestHandler
+from collections import defaultdict
+
+# Define the default port and frequency if not specified in the YAML
+DEFAULT_PORT = 8000
+DEFAULT_FREQUENCY = 60
+
+# Initialize metrics and labels dictionaries
+metrics = defaultdict(int)
+labels = {}
+
+def run_command(command, comp_name):
+    try:
+        output = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
+        for line in output.splitlines():
+            if "processes" in line:
+                parse_process_line(line, comp_name)
+            elif "proxies" in line:
+                parse_proxy_line(line, comp_name)
+    except subprocess.CalledProcessError as e:
+        print("Error executing command for {}: {}".format(comp_name, e.output))
+        update_metrics(comp_name, "Error executing command")
+        metrics["tuxedo_exporter_error"] = 1  # Set error metric to 1
+    else:
+        metrics["tuxedo_exporter_error"] = 0  # No error, set error metric to 0
+
+def parse_process_line(line, comp_name):
+    match = re.search(r"(Normal|Critical): comp=([\w]+) (All|Missing in total) (\d+) out of (\d+) Tuxedo processes", line)
+    if match:
+        process_status, tux_comp, message_type, missing, total = match.groups()
+        update_metrics(tux_comp, process_status, message_type, missing, total)
+
+def parse_proxy_line(line, comp_name):
+    # Pattern 1: Normal: comp=...
+    match = re.search(r"(Normal|Critical): comp=([\w]+) ([\w\s]+)", line)
+    if match:
+        proxy_status, tux_comp, message = match.groups()
+        if not tux_comp:
+            tux_comp = comp_name  # Use command name from YAML
+        update_proxy_metrics(tux_comp, proxy_status, message)
+    else:
+        # Pattern 2: Critical: comp=...
+        match = re.search(r"(Normal|Critical): comp=([\w]+) (\d+) ([\w\s]+)", line)
+        if match:
+            proxy_status, tux_comp, missing, message = match.groups()
+            if not tux_comp:
+                tux_comp = comp_name  # Use command name from YAML
+            update_proxy_metrics(tux_comp, proxy_status, "{} {}".format(missing, message))
+        else:
+            # Pattern 3: Custom pattern
+            match = re.search(r"(Normal|Critical): ([\w\s]+)", line)
+            if match:
+                proxy_status, message = match.groups()
+                tux_comp = comp_name  # Use command name from YAML
+                update_proxy_metrics(tux_comp, proxy_status, message)
+
+def update_metrics(tux_comp, process_status, message_type=None, missing=None, total=None):
+    labels["tux_comp"] = tux_comp
+    labels["tux_process_status_message"] = message_type + " in total {} out of {} Tuxedo processes".format(missing, total)
+    metrics["tuxedo_process_status"] = 2 if process_status == "Normal" else 1
+    metrics["tuxedo_total_processes"] = int(total)
+    metrics["tuxedo_missing_processes"] = int(missing)
+
+def update_proxy_metrics(tux_comp, proxy_status, message):
+    labels["tux_comp"] = tux_comp
+    labels["tux_proxy_status_message"] = message
+    metrics["tuxedo_proxy_status"] = 2 if proxy_status == "Normal" else 1
+    metrics["tuxedo_missing_proxies"] = int(re.search(r"(\d+)", message).group())
+
+class TuxedoMetricsHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/metrics':
+            collect_tuxedo_metrics()
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            for key, value in metrics.items():
+                label = labels.get(key, '')
+                self.wfile.write('{}{{{}}} {}\n'.format(key, label, value))
+
+def collect_tuxedo_metrics():
+    # Load YAML configuration
+    with open('/opt/apps/gxadm/xtest/tuxedo_monitor_config.yaml', 'r') as yaml_file:
+        config = yaml.safe_load(yaml_file)
+
+    http_port = config.get('http_port', DEFAULT_PORT)
+    frequency = config.get('frequency', DEFAULT_FREQUENCY)
+
+    for app in config.get('applications', []):
+        comp_name = app['name']
+        command = app['command']
+        run_command(command, comp_name)
+
+if __name__ == '__main__':
+    from BaseHTTPServer import HTTPServer
+
+    # Create the HTTP server with the custom handler
+    server = HTTPServer(('0.0.0.0', http_port), TuxedoMetricsHandler)
+    print('Starting server on port {}'.format(http_port))
+
+    # Start the server
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
